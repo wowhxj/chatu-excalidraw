@@ -96,20 +96,35 @@ are conventionally expressed as a fraction of \\linewidth."
   :group 'chatu-excalidraw
   :type 'string)
 
-(defcustom chatu-excalidraw-rename-fonts nil
-  "Whether to pass `excalidraw_export --rename_fonts'.
+(defconst chatu-excalidraw-font-names '("Virgil" "Cascadia" "Segoe UI Emoji")
+  "Font-family names `excalidraw_export' hardcodes in its SVG output.
+\"Virgil\" is the hand-drawn text font, \"Cascadia\" the code font,
+and \"Segoe UI Emoji\" a fallback used for CJK/emoji text — all three
+are declared or assumed available in ways that don't work for
+non-browser SVG renderers. See `chatu-excalidraw-handwritten-font'.")
 
-`excalidraw_export' normally emits SVGs whose @font-face rules point
-at remote font URLs (e.g. https://excalidraw.com/Virgil.woff2\\=), which
-non-browser SVG renderers — including the one Emacs uses to display
-inline images — do not fetch, so the text falls back to a generic
-font instead of Excalidraw's handwritten style. `--rename_fonts'
-renames those font-family references to \"Virgil GS\" and \"Cascadia
-Code\", the names under which the matching fonts are commonly
-installed locally. Enable this only after installing those fonts
-system-wide; otherwise it has no visible effect."
+(defcustom chatu-excalidraw-handwritten-font nil
+  "Local font family substituted for `chatu-excalidraw-font-names'.
+
+`excalidraw_export' emits SVGs referencing \"Virgil\" and \"Cascadia\"
+via @font-face rules that point at remote font URLs (e.g.
+https://excalidraw.com/Virgil.woff2\\=), and \"Segoe UI Emoji\" (used
+for CJK/emoji text) with no @font-face at all, just assumed to be
+installed. Non-browser SVG renderers — including the one Emacs uses
+to display inline images — don't fetch remote fonts and are unlikely
+to have \"Segoe UI Emoji\" installed either, so text falls back to a
+generic font instead of matching what the Excalidraw editor shows.
+
+Set this to the family name of a font you have installed locally
+(check with `M-x list-faces-display' or the system font book/registry
+— NOT the file name; e.g. a file named XiaolaiMono-Regular.ttf may
+register its family as \"Xiaolai Mono\") to have
+`chatu-excalidraw-script' rewrite all of `chatu-excalidraw-font-names'
+in the exported SVG to it. Leave nil to use `excalidraw_export's
+output unmodified."
   :group 'chatu-excalidraw
-  :type 'boolean)
+  :type '(choice (const :tag "Use excalidraw_export's fonts as-is" nil)
+                 (string :tag "Local font family name")))
 
 (defcustom chatu-excalidraw-export-bin-dir nil
   "Directory prepended to PATH when running `excalidraw_export'.
@@ -163,13 +178,25 @@ KEYWORD-PLIST contains parameters from the chatu line."
                           (format "PATH=%s:$PATH "
                                   (shell-quote-argument
                                    (expand-file-name chatu-excalidraw-export-bin-dir)))
-                        "")))
-    (format "mkdir -p %s && %sexcalidraw_export%s %s && %s"
+                        ""))
+         (font-command (if chatu-excalidraw-handwritten-font
+                           (format " && sed -i.bak %s %s && rm -f %s.bak"
+                                   (mapconcat
+                                    (lambda (name)
+                                      (format "-e %s"
+                                              (shell-quote-argument
+                                               (format "s|%s|%s|g" name
+                                                       chatu-excalidraw-handwritten-font))))
+                                    chatu-excalidraw-font-names " ")
+                                   (shell-quote-argument output-path)
+                                   (shell-quote-argument output-path))
+                         "")))
+    (format "mkdir -p %s && %sexcalidraw_export %s && %s%s"
             (shell-quote-argument output-dir)
             path-prefix
-            (if chatu-excalidraw-rename-fonts " --rename_fonts" "")
             (shell-quote-argument input-path)
-            move-command)))
+            move-command
+            font-command)))
 
 (defconst chatu-excalidraw-empty
   "{\"type\":\"excalidraw\",\"version\":2,\"source\":\"https://excalidraw.com\",\"elements\":[],\"appState\":{\"gridSize\":null,\"viewBackgroundColor\":\"#ffffff\"}}"

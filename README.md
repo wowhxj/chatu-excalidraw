@@ -59,7 +59,7 @@ Or manually, if the file is on your `load-path`:
 | `chatu-excalidraw-new-type-options` | `("drawio" "plantuml" "excalidraw")` | Candidates offered by `chatu-excalidraw-new`'s type prompt. |
 | `chatu-excalidraw-new-default-type` | `"drawio"` | Type preselected in that prompt. |
 | `chatu-excalidraw-export-bin-dir` | `nil` | Directory prepended to `PATH` when running `excalidraw_export`. Set this if you had to install `excalidraw_export` under a specific Node version — see [Node/canvas version issues](#nodecanvas-version-issues). |
-| `chatu-excalidraw-rename-fonts` | `nil` | Pass `--rename_fonts` to `excalidraw_export`. See [Font rendering](#font-rendering). |
+| `chatu-excalidraw-handwritten-font` | `nil` | Local font family substituted into the exported SVG in place of `excalidraw_export`'s built-in fonts. See [Font rendering](#font-rendering). |
 | `chatu-excalidraw-new-default-width` | `800` | Default image width (px) offered by `chatu-excalidraw-new`'s width prompt. |
 | `chatu-excalidraw-attr-latex-width` | `"0.5\\linewidth"` | Width used in the `#+ATTR_LATEX` line `chatu-excalidraw-add` inserts (LaTeX widths are conventionally a fraction of `\linewidth`, not pixels). |
 
@@ -218,22 +218,37 @@ whatever else is first on your regular `PATH`.
 
 ## Font rendering
 
-The SVG `excalidraw_export` produces references Excalidraw's
-handwritten fonts ("Virgil", "Cascadia") via `@font-face { src:
-url("https://excalidraw.com/Virgil.woff2") }` — a **remote** font URL.
-Browsers fetch that fine, but the renderer Emacs uses to display
-inline SVGs (librsvg, via `image-mode`/`org-redisplay-inline-images`)
-does not fetch remote fonts, so the text silently falls back to a
-generic font instead of matching what you see in the PWA editor.
+The SVG `excalidraw_export` produces hardcodes three font-family
+names (`chatu-excalidraw-font-names`):
 
-`excalidraw_export` has a `--rename_fonts` flag (enabled via
-`chatu-excalidraw-rename-fonts`) that renames those `@font-face`
-references to "Virgil GS" and "Cascadia Code" — names under which the
-matching fonts are commonly installed as regular system fonts, which
-`librsvg` *can* use without any network access. This only has a
-visible effect if you actually install matching fonts under those
-family names locally; enabling the flag without doing so changes
-nothing.
+- `"Virgil"` — hand-drawn Latin text — declared via `@font-face {
+  src: url("https://excalidraw.com/Virgil.woff2") }`, a **remote**
+  font URL.
+- `"Cascadia"` — code text — same remote-URL pattern.
+- `"Segoe UI Emoji"` — used for CJK/emoji text — referenced directly
+  with no `@font-face` at all, just assumed to already be installed.
+
+Browsers fetch the remote fonts fine and likely have Segoe UI Emoji
+available too; the renderer Emacs uses for inline SVGs (librsvg, via
+`image-mode`/`org-redisplay-inline-images`) does neither, so text
+silently falls back to a generic font — for *any* script, not just
+Latin — instead of matching what you see in the PWA editor.
+
+Set `chatu-excalidraw-handwritten-font` to the family name of a font
+you have installed locally, and `chatu-excalidraw-script` will rewrite
+all three of the above to it in the exported SVG (a `sed`
+post-processing step). Use the font's registered **family** name, not
+its file name — e.g. a file named `XiaolaiMono-Regular.ttf` may
+register its family as `"Xiaolai Mono"`; check with `fc-list` or
+Font Book:
+
+```elisp
+(setq chatu-excalidraw-handwritten-font "Xiaolai Mono")
+```
+
+This only has a visible effect if the font is actually installed
+locally under that exact family name; if not, `librsvg` just falls
+back to a generic font again, same as before.
 
 ## License
 
