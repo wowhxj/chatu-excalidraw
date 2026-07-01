@@ -59,6 +59,9 @@ Or manually, if the file is on your `load-path`:
 | `chatu-excalidraw-new-type-options` | `("drawio" "plantuml" "excalidraw")` | Candidates offered by `chatu-excalidraw-new`'s type prompt. |
 | `chatu-excalidraw-new-default-type` | `"drawio"` | Type preselected in that prompt. |
 | `chatu-excalidraw-export-bin-dir` | `nil` | Directory prepended to `PATH` when running `excalidraw_export`. Set this if you had to install `excalidraw_export` under a specific Node version — see [Node/canvas version issues](#nodecanvas-version-issues). |
+| `chatu-excalidraw-rename-fonts` | `nil` | Pass `--rename_fonts` to `excalidraw_export`. See [Font rendering](#font-rendering). |
+| `chatu-excalidraw-new-default-width` | `800` | Default image width (px) offered by `chatu-excalidraw-new`'s width prompt. |
+| `chatu-excalidraw-attr-latex-width` | `"0.5\\linewidth"` | Width used in the `#+ATTR_LATEX` line `chatu-excalidraw-add` inserts (LaTeX widths are conventionally a fraction of `\linewidth`, not pixels). |
 
 Example — pointing at a self-hosted Excalidraw server:
 
@@ -77,15 +80,18 @@ C-o` to open one for editing.
 This package overrides `chatu-new` with `chatu-excalidraw-new`:
 it prompts for a type (`completing-read` over
 `chatu-excalidraw-new-type-options`, defaulting to
-`chatu-excalidraw-new-default-type`), then for an input file name.
-Choosing `excalidraw` with name `arch` inserts, in `org-mode`:
+`chatu-excalidraw-new-default-type`), an input file name, and a
+display width (defaulting to `chatu-excalidraw-new-default-width`).
+Choosing `excalidraw`, name `arch`, width `400` inserts, in `org-mode`:
 
 ```org
-#+chatu: :excalidraw "arch"
+#+chatu: :excalidraw "arch" :width 400
 #+results:
 ```
 
-(in `markdown-mode`, a single HTML comment line instead).
+(in `markdown-mode`, a single HTML comment line instead). The `:width`
+value is consumed by `chatu-excalidraw-add` in step 3 below; it has no
+effect otherwise, so it's harmless to edit or remove by hand.
 
 **2. Edit the diagram — cursor on the chatu line, `C-c C-o`**
 
@@ -106,11 +112,34 @@ Excalidraw document, then opened:
 
 **3. Render and insert the image — `C-c C-c`**
 
-Runs `chatu-excalidraw-script`, which shells out to
+This package also overrides `chatu-add` with `chatu-excalidraw-add`.
+It runs `chatu-excalidraw-script`, which shells out to
 `excalidraw_export` to produce an SVG under `chatu-output-dir`, then
-inserts (or replaces) an image link below the chatu line and
-refreshes inline image display. Re-run `C-c C-c` any time after
-editing the diagram to update the rendered image.
+(re)inserts an image link below the chatu line and refreshes inline
+image display — same as stock `chatu-add`. In `org-mode`, if the line
+has a `:width` (as inserted by `chatu-excalidraw-new`), it also
+(re)inserts a `#+CAPTION:`/`#+ATTR_ORG:`/`#+ATTR_LATEX:`/`#+ATTR_HTML:`
+block above the image link, e.g.:
+
+```org
+#+CAPTION:
+#+ATTR_ORG: :width 400
+#+ATTR_LATEX: :width 0.5\linewidth :float nil
+#+ATTR_HTML: :width 400 :class zoomImage :border 1
+[[file:./draws/arch.svg]]
+```
+
+Re-run `C-c C-c` any time after editing the diagram; it fully
+regenerates everything it owns (the `#+results:` placeholder, any
+previous `#+ATTR_*` block, and the image link) rather than appending,
+so repeated renders don't accumulate stale content.
+
+Note: the export runs asynchronously, and the image link is inserted
+immediately regardless of whether it succeeds — if the rendered image
+looks broken, check whether the output `.svg` file actually exists
+before assuming the Lisp side is at fault (see
+[Node/canvas version issues](#nodecanvas-version-issues) for a common
+cause).
 
 ## macOS setup: round-trip saving
 
@@ -142,9 +171,10 @@ editor writes straight back to that same path —
 `excalidraw_export` depends on the native `canvas` npm module, which
 ships prebuilt binaries pinned to specific Node ABI versions. If your
 system Node is newer than what `canvas` has a prebuilt binary for,
-`chatu-add` silently fails (it runs the export asynchronously and
-inserts the image link regardless of success — check for a missing
-output file if the rendered image looks broken) with something like:
+`chatu-excalidraw-add` silently fails (it runs the export
+asynchronously and inserts the image link regardless of success —
+check for a missing output file if the rendered image looks broken)
+with something like:
 
 ```
 Error: The module '.../canvas/build/Release/canvas.node'
@@ -176,6 +206,25 @@ nvm exec 22 npm install -g excalidraw_export
 that directory to `PATH` for the export command (which is what this
 variable does) makes it resolve to the matching Node instead of
 whatever else is first on your regular `PATH`.
+
+## Font rendering
+
+The SVG `excalidraw_export` produces references Excalidraw's
+handwritten fonts ("Virgil", "Cascadia") via `@font-face { src:
+url("https://excalidraw.com/Virgil.woff2") }` — a **remote** font URL.
+Browsers fetch that fine, but the renderer Emacs uses to display
+inline SVGs (librsvg, via `image-mode`/`org-redisplay-inline-images`)
+does not fetch remote fonts, so the text silently falls back to a
+generic font instead of matching what you see in the PWA editor.
+
+`excalidraw_export` has a `--rename_fonts` flag (enabled via
+`chatu-excalidraw-rename-fonts`) that renames those `@font-face`
+references to "Virgil GS" and "Cascadia Code" — names under which the
+matching fonts are commonly installed as regular system fonts, which
+`librsvg` *can* use without any network access. This only has a
+visible effect if you actually install matching fonts under those
+family names locally; enabling the flag without doing so changes
+nothing.
 
 ## License
 

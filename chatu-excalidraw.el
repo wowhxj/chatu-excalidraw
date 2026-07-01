@@ -79,6 +79,38 @@ save changes straight back to that file). See `chatu-excalidraw-open'."
   :group 'chatu-excalidraw
   :type 'string)
 
+(defcustom chatu-excalidraw-new-default-width 800
+  "Default image display width (in pixels) offered by `chatu-excalidraw-new'.
+
+This becomes the :width value on the inserted chatu line, and is used
+by `chatu-excalidraw-add' to set the #+ATTR_ORG/#+ATTR_HTML width when
+rendering, in `org-mode' buffers."
+  :group 'chatu-excalidraw
+  :type 'integer)
+
+(defcustom chatu-excalidraw-attr-latex-width "0.5\\linewidth"
+  "Width used in the #+ATTR_LATEX line inserted by `chatu-excalidraw-add'.
+
+Unlike the pixel :width used for #+ATTR_ORG/#+ATTR_HTML, LaTeX widths
+are conventionally expressed as a fraction of \\linewidth."
+  :group 'chatu-excalidraw
+  :type 'string)
+
+(defcustom chatu-excalidraw-rename-fonts nil
+  "Whether to pass `excalidraw_export --rename_fonts'.
+
+`excalidraw_export' normally emits SVGs whose @font-face rules point
+at remote font URLs (e.g. https://excalidraw.com/Virgil.woff2\\=), which
+non-browser SVG renderers — including the one Emacs uses to display
+inline images — do not fetch, so the text falls back to a generic
+font instead of Excalidraw's handwritten style. `--rename_fonts'
+renames those font-family references to \"Virgil GS\" and \"Cascadia
+Code\", the names under which the matching fonts are commonly
+installed locally. Enable this only after installing those fonts
+system-wide; otherwise it has no visible effect."
+  :group 'chatu-excalidraw
+  :type 'boolean)
+
 (defcustom chatu-excalidraw-export-bin-dir nil
   "Directory prepended to PATH when running `excalidraw_export'.
 
@@ -132,9 +164,10 @@ KEYWORD-PLIST contains parameters from the chatu line."
                                   (shell-quote-argument
                                    (expand-file-name chatu-excalidraw-export-bin-dir)))
                         "")))
-    (format "mkdir -p %s && %sexcalidraw_export %s && %s"
+    (format "mkdir -p %s && %sexcalidraw_export%s %s && %s"
             (shell-quote-argument output-dir)
             path-prefix
+            (if chatu-excalidraw-rename-fonts " --rename_fonts" "")
             (shell-quote-argument input-path)
             move-command)))
 
@@ -178,9 +211,19 @@ a URL, and edits must be exported/saved back manually."
     (with-temp-file output-path
       (insert json-data))))
 
+(defun chatu-excalidraw-get-width (line)
+  "Get :width value from chatu LINE, as inserted by `chatu-excalidraw-new'."
+  (when (string-match ":width +\\([0-9]+\\)" line)
+    (list :width (substring-no-properties (match-string 1 line)))))
+
+;;;###autoload
+(add-to-list 'chatu-keyword-value-functions #'chatu-excalidraw-get-width t)
+
 ;;;###autoload
 (defun chatu-excalidraw-new ()
-  "Insert a chatu text line, picking the diagram type via `completing-read'."
+  "Insert a chatu text line, picking the diagram type via `completing-read'.
+Also prompts for a display width, stored as :width on the line and
+used by `chatu-excalidraw-add' to size the rendered image."
   (interactive)
   (let* ((selected-type (completing-read "Select type: "
                                           chatu-excalidraw-new-type-options
@@ -193,13 +236,79 @@ a URL, and edits must be exported/saved back manually."
          (suffix (if (derived-mode-p 'markdown-mode)
                      " -->"
                    "\n#+results:"))
-         (input-name (read-string "Input name: " "")))
-    (insert prefix selected-type " \"" input-name "\"" suffix)
+         (input-name (read-string "Input name: " ""))
+         (width (read-number "Image width: " chatu-excalidraw-new-default-width)))
+    (insert prefix selected-type " \"" input-name "\" :width "
+            (number-to-string width) suffix)
     (when (derived-mode-p 'org-mode)
       (forward-line -1))))
 
 ;;;###autoload
 (advice-add 'chatu-new :override #'chatu-excalidraw-new)
+
+(defun chatu-excalidraw--owned-line-p (line)
+  "Non-nil if LINE is one `chatu-excalidraw-add' inserts/regenerates."
+  (or (string-prefix-p "#+results:" line)
+      (string-prefix-p "#+CAPTION:" line)
+      (string-prefix-p "#+ATTR_ORG:" line)
+      (string-prefix-p "#+ATTR_LATEX:" line)
+      (string-prefix-p "#+ATTR_HTML:" line)
+      (string-prefix-p (chatu-img-pre) line)))
+
+;;;###autoload
+(defun chatu-excalidraw-add ()
+  "Like `chatu-add', but also insert #+ATTR_* width lines in `org-mode'.
+Uses the chatu line's :width, as set via `chatu-excalidraw-new'."
+  (interactive)
+  (save-excursion
+    (let* ((keyword-plist (chatu-keyword-plist))
+           (width (plist-get keyword-plist :width))
+           (type (downcase (plist-get keyword-plist :type)))
+           (script (progn
+                     (require (intern (concat "chatu-" type)))
+                     (funcall (intern (concat "chatu-" type "-script"))
+                              keyword-plist)))
+           (script (string-replace "\\~" "~" script))
+           (result (plist-get keyword-plist :output-path))
+           (result-dir (file-name-directory result))
+           (space-count (string-search
+                         (cond ((derived-mode-p 'markdown-mode) "<")
+                               ((derived-mode-p 'org-mode) "#"))
+                         (buffer-substring (line-beginning-position)
+                                            (line-end-position)))))
+      (when (not (file-exists-p result-dir))
+        (make-directory result-dir t))
+      (forward-line)
+      ;; Regenerate everything this command owns from scratch: the
+      ;; #+results: placeholder, any previously-inserted #+ATTR_*
+      ;; block, and any previously-inserted image link.
+      (while (and (not (eobp))
+                  (chatu-excalidraw--owned-line-p
+                   (string-trim (buffer-substring (line-beginning-position)
+                                                   (line-end-position)))))
+        ;; `kill-whole-line' with arg 0 leaves the newline (and an
+        ;; empty residual line) behind, which would stop this loop
+        ;; after one iteration; delete the line and its newline
+        ;; outright so consecutive owned lines are all consumed.
+        (delete-region (line-beginning-position)
+                        (progn (forward-line 1) (point))))
+      (let ((process (start-process-shell-command "chatu-buffer" nil script)))
+        (set-process-sentinel
+         process (lambda (_process _event) (chatu-refresh-image))))
+      (beginning-of-line)
+      (open-line 1)
+      (let ((indent (make-string space-count ?\s)))
+        (when (and width (derived-mode-p 'org-mode))
+          (insert indent "#+CAPTION:\n"
+                  indent (format "#+ATTR_ORG: :width %s\n" width)
+                  indent (format "#+ATTR_LATEX: :width %s :float nil\n"
+                                 chatu-excalidraw-attr-latex-width)
+                  indent (format "#+ATTR_HTML: :width %s :class zoomImage :border 1\n" width)))
+        (insert indent)
+        (chatu-insert-image result)))))
+
+;;;###autoload
+(advice-add 'chatu-add :override #'chatu-excalidraw-add)
 
 (provide 'chatu-excalidraw)
 
