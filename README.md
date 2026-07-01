@@ -225,7 +225,7 @@ nvm exec 22 npm install -g excalidraw_export
 ```
 
 ```elisp
-(setq chatu-excalidraw-export-bin-dir "~/.nvm/versions/node/v22.23.1/bin")
+(setq chatu-excalidraw-export-bin-dir "~/.nvm/versions/node/vX.Y.Z/bin")
 ```
 
 `excalidraw_export`'s shebang is `#!/usr/bin/env node`, so prepending

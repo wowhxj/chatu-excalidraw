@@ -135,7 +135,7 @@ Node too new for the installed \"canvas\" version, it fails with an
 ERR_DLOPEN_FAILED / NODE_MODULE_VERSION mismatch. If that happens,
 install `excalidraw_export' under an older Node via nvm (e.g. `nvm
 exec 22 npm install -g excalidraw_export'), then point this at that
-Node's bin directory, e.g. \"~/.nvm/versions/node/v22.23.1/bin\" — its
+Node's bin directory, e.g. \"~/.nvm/versions/node/vX.Y.Z/bin\" — its
 shebang (`#!/usr/bin/env node') will then resolve to that Node
 instead of whatever is first on your regular PATH. Leave nil to use
 `excalidraw_export' as found on PATH unmodified."
