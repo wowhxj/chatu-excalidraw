@@ -31,7 +31,8 @@ so you pick the diagram type from a list instead of typing it.
 
 ## Installation
 
-With `use-package` + `straight.el`:
+With `use-package` and Emacs 29+'s built-in `package-vc.el` (via the
+`:vc` keyword):
 
 ```elisp
 (use-package chatu
@@ -40,7 +41,26 @@ With `use-package` + `straight.el`:
   :hook ((org-mode markdown-mode) . chatu-mode))
 
 (use-package chatu-excalidraw
-  :straight (chatu-excalidraw :type git :host github :repo "your-user/chatu-excalidraw")
+  :vc (:url "https://github.com/wowhxj/chatu-excalidraw" :rev newest)
+  :after chatu
+  :config
+  ;; Only needed if you self-host Excalidraw instead of using
+  ;; https://excalidraw.com/ — see chatu-excalidraw-server-url below.
+  (setq chatu-excalidraw-server-url "https://your-excalidraw-host.example.com")
+  ;; Only needed if excalidraw_export needs pinning to a specific Node
+  ;; version — see "Node/canvas version issues" below.
+  (setq chatu-excalidraw-export-bin-dir "~/.nvm/versions/node/vX.Y.Z/bin")
+  ;; Only needed to fix font rendering — see "Font rendering" below.
+  (setq chatu-excalidraw-handwritten-font "Xiaolai Mono"))
+```
+
+To upgrade later: `M-x package-vc-upgrade RET chatu-excalidraw RET`.
+
+With `straight.el` instead:
+
+```elisp
+(use-package chatu-excalidraw
+  :straight (chatu-excalidraw :type git :host github :repo "wowhxj/chatu-excalidraw")
   :after chatu)
 ```
 
@@ -63,11 +83,8 @@ Or manually, if the file is on your `load-path`:
 | `chatu-excalidraw-new-default-width` | `800` | Default image width (px) offered by `chatu-excalidraw-new`'s width prompt. |
 | `chatu-excalidraw-attr-latex-width` | `"0.5\\linewidth"` | Width used in the `#+ATTR_LATEX` line `chatu-excalidraw-add` inserts (LaTeX widths are conventionally a fraction of `\linewidth`, not pixels). |
 
-Example — pointing at a self-hosted Excalidraw server:
-
-```elisp
-(setq chatu-excalidraw-server-url "https://your-excalidraw-host.example.com")
-```
+See the `:config` block in [Installation](#installation) above for a
+full example combining several of these.
 
 ## Usage
 
