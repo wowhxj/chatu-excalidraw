@@ -54,7 +54,13 @@
 
 (defcustom chatu-excalidraw-server-url "https://excalidraw.com/"
   "The URL for the Excalidraw server.
-Default is the official server. Set this to your self-hosted instance if needed."
+Default is the official server. Set this to your self-hosted instance if needed.
+
+Only used on non-macOS systems. On macOS, `chatu-excalidraw-open' opens
+the local .excalidraw file directly via the \"open\" command instead,
+relying on an installed Excalidraw PWA being registered as the default
+handler for .excalidraw files (which is what makes Cmd-S in the app
+save changes straight back to that file). See `chatu-excalidraw-open'."
   :group 'chatu-excalidraw
   :type 'string)
 
@@ -114,8 +120,18 @@ KEYWORD-PLIST contains parameters from the chatu line."
   "Content of empty Excalidraw file.")
 
 (defun chatu-excalidraw-open (keyword-plist)
-  "Open .excalidraw file in the browser, at `chatu-excalidraw-server-url'.
-KEYWORD-PLIST contains parameters from the chatu line."
+  "Open .excalidraw file for editing.
+KEYWORD-PLIST contains parameters from the chatu line.
+
+On macOS, the file is opened directly via the \"open\" command, so
+that if an Excalidraw PWA (e.g. `chatu-excalidraw-server-url'
+installed as a Chrome app and set as the default handler for
+.excalidraw files) is registered, it gets a real file handle and can
+save changes straight back to this same path.
+
+On other systems, no such file-handler mechanism exists, so the
+diagram content is instead passed to `chatu-excalidraw-server-url' via
+a URL, and edits must be exported/saved back manually."
   (interactive)
   (let* ((input-path (plist-get keyword-plist :input-path))
          (input-path (file-truename (chatu-common-with-extension input-path "excalidraw")))
@@ -123,15 +139,15 @@ KEYWORD-PLIST contains parameters from the chatu line."
     (unless file-exists
       (with-temp-file input-path
         (insert chatu-excalidraw-empty)))
-    (let ((url (concat chatu-excalidraw-server-url "?#json="
-                       (url-hexify-string
-                        (with-temp-buffer
-                          (insert-file-contents input-path)
-                          (buffer-string))))))
-      (if (eq system-type 'darwin)
-          ;; "open" also accepts URLs and hands them to the default browser.
-          (start-process "excalidraw" nil "open" url)
-        (start-process "excalidraw" nil (funcall chatu-excalidraw-executable-func) url)))))
+    (if (eq system-type 'darwin)
+        (start-process "excalidraw" nil "open" input-path)
+      (let* ((browser-path (funcall chatu-excalidraw-executable-func))
+             (url (concat chatu-excalidraw-server-url "?#json="
+                         (url-hexify-string
+                          (with-temp-buffer
+                            (insert-file-contents input-path)
+                            (buffer-string))))))
+        (start-process "excalidraw" nil browser-path url)))))
 
 (defun chatu-excalidraw-save-from-url (url output-path)
   "Save Excalidraw content from URL to OUTPUT-PATH."
