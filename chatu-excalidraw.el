@@ -114,7 +114,7 @@ KEYWORD-PLIST contains parameters from the chatu line."
   "Content of empty Excalidraw file.")
 
 (defun chatu-excalidraw-open (keyword-plist)
-  "Open .excalidraw file using macOS open command or browser.
+  "Open .excalidraw file in the browser, at `chatu-excalidraw-server-url'.
 KEYWORD-PLIST contains parameters from the chatu line."
   (interactive)
   (let* ((input-path (plist-get keyword-plist :input-path))
@@ -123,15 +123,15 @@ KEYWORD-PLIST contains parameters from the chatu line."
     (unless file-exists
       (with-temp-file input-path
         (insert chatu-excalidraw-empty)))
-    (if (eq system-type 'darwin)
-        (start-process "excalidraw" nil "open" input-path)
-      (let* ((browser-path (funcall chatu-excalidraw-executable-func))
-             (url (concat chatu-excalidraw-server-url "?#json="
-                         (url-hexify-string
-                          (with-temp-buffer
-                            (insert-file-contents input-path)
-                            (buffer-string))))))
-        (start-process "excalidraw" nil browser-path url)))))
+    (let ((url (concat chatu-excalidraw-server-url "?#json="
+                       (url-hexify-string
+                        (with-temp-buffer
+                          (insert-file-contents input-path)
+                          (buffer-string))))))
+      (if (eq system-type 'darwin)
+          ;; "open" also accepts URLs and hands them to the default browser.
+          (start-process "excalidraw" nil "open" url)
+        (start-process "excalidraw" nil (funcall chatu-excalidraw-executable-func) url)))))
 
 (defun chatu-excalidraw-save-from-url (url output-path)
   "Save Excalidraw content from URL to OUTPUT-PATH."
