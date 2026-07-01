@@ -219,11 +219,17 @@ a URL, and edits must be exported/saved back manually."
 ;;;###autoload
 (add-to-list 'chatu-keyword-value-functions #'chatu-excalidraw-get-width t)
 
+(defun chatu-excalidraw--new-input-name ()
+  "Generate an input file base name: \"chatu_<timestamp>\"."
+  (format-time-string "chatu_%Y%m%d_%H%M%S"))
+
 ;;;###autoload
 (defun chatu-excalidraw-new ()
   "Insert a chatu text line, picking the diagram type via `completing-read'.
 Also prompts for a display width, stored as :width on the line and
-used by `chatu-excalidraw-add' to size the rendered image."
+used by `chatu-excalidraw-add' to size the rendered image. The input
+file name is generated automatically as \"chatu_<timestamp>\" rather
+than prompted for."
   (interactive)
   (let* ((selected-type (completing-read "Select type: "
                                           chatu-excalidraw-new-type-options
@@ -235,8 +241,8 @@ used by `chatu-excalidraw-add' to size the rendered image."
                         "#+chatu: :")))
          (suffix (if (derived-mode-p 'markdown-mode)
                      " -->"
-                   "\n#+results:"))
-         (input-name (read-string "Input name: " ""))
+                   "\n#+RESULTS:"))
+         (input-name (chatu-excalidraw--new-input-name))
          (width (read-number "Image width: " chatu-excalidraw-new-default-width)))
     (insert prefix selected-type " \"" input-name "\" :width "
             (number-to-string width) suffix)
@@ -246,10 +252,15 @@ used by `chatu-excalidraw-add' to size the rendered image."
 ;;;###autoload
 (advice-add 'chatu-new :override #'chatu-excalidraw-new)
 
+(defun chatu-excalidraw--results-line-p (line)
+  "Non-nil if LINE looks like an org #+RESULTS: marker."
+  (string-prefix-p "#+results:" (downcase line)))
+
 (defun chatu-excalidraw--owned-line-p (line)
-  "Non-nil if LINE is one `chatu-excalidraw-add' inserts/regenerates."
-  (or (string-prefix-p "#+results:" line)
-      (string-prefix-p "#+CAPTION:" line)
+  "Non-nil if LINE is one `chatu-excalidraw-add' regenerates on every render.
+This excludes the #+RESULTS: marker itself, which is preserved rather
+than regenerated — see `chatu-excalidraw--results-line-p'."
+  (or (string-prefix-p "#+CAPTION:" line)
       (string-prefix-p "#+ATTR_ORG:" line)
       (string-prefix-p "#+ATTR_LATEX:" line)
       (string-prefix-p "#+ATTR_HTML:" line)
@@ -279,9 +290,18 @@ Uses the chatu line's :width, as set via `chatu-excalidraw-new'."
       (when (not (file-exists-p result-dir))
         (make-directory result-dir t))
       (forward-line)
-      ;; Regenerate everything this command owns from scratch: the
-      ;; #+results: placeholder, any previously-inserted #+ATTR_*
-      ;; block, and any previously-inserted image link.
+      ;; Preserve (or insert, for lines written before this existed)
+      ;; the #+RESULTS: marker, org-babel style, ahead of the actual
+      ;; output; only the content below it gets regenerated.
+      (when (derived-mode-p 'org-mode)
+        (if (chatu-excalidraw--results-line-p
+             (string-trim (buffer-substring (line-beginning-position)
+                                             (line-end-position))))
+            (forward-line)
+          (insert "#+RESULTS:\n")))
+      ;; Regenerate everything else this command owns from scratch:
+      ;; any previously-inserted #+ATTR_* block, and any
+      ;; previously-inserted image link.
       (while (and (not (eobp))
                   (chatu-excalidraw--owned-line-p
                    (string-trim (buffer-substring (line-beginning-position)

@@ -80,16 +80,19 @@ C-o` to open one for editing.
 This package overrides `chatu-new` with `chatu-excalidraw-new`:
 it prompts for a type (`completing-read` over
 `chatu-excalidraw-new-type-options`, defaulting to
-`chatu-excalidraw-new-default-type`), an input file name, and a
-display width (defaulting to `chatu-excalidraw-new-default-width`).
-Choosing `excalidraw`, name `arch`, width `400` inserts, in `org-mode`:
+`chatu-excalidraw-new-default-type`) and a display width (defaulting
+to `chatu-excalidraw-new-default-width`) — there is no file name
+prompt; the input file is named `chatu_<timestamp>` automatically
+(e.g. `chatu_20260701_022806.excalidraw`), one less thing to type.
+Choosing `excalidraw`, width `400` inserts, in `org-mode`:
 
 ```org
-#+chatu: :excalidraw "arch" :width 400
-#+results:
+#+chatu: :excalidraw "chatu_20260701_022806" :width 400
+#+RESULTS:
 ```
 
-(in `markdown-mode`, a single HTML comment line instead). The `:width`
+(in `markdown-mode`, a single HTML comment line instead, with no
+`#+RESULTS:` — that marker is an org-mode convention). The `:width`
 value is consumed by `chatu-excalidraw-add` in step 3 below; it has no
 effect otherwise, so it's harmless to edit or remove by hand.
 
@@ -116,23 +119,29 @@ This package also overrides `chatu-add` with `chatu-excalidraw-add`.
 It runs `chatu-excalidraw-script`, which shells out to
 `excalidraw_export` to produce an SVG under `chatu-output-dir`, then
 (re)inserts an image link below the chatu line and refreshes inline
-image display — same as stock `chatu-add`. In `org-mode`, if the line
-has a `:width` (as inserted by `chatu-excalidraw-new`), it also
-(re)inserts a `#+CAPTION:`/`#+ATTR_ORG:`/`#+ATTR_LATEX:`/`#+ATTR_HTML:`
-block above the image link, e.g.:
+image display — same as stock `chatu-add`. In `org-mode`, it also
+keeps the `#+RESULTS:` marker (inserting one if missing, e.g. for
+chatu lines written before this existed) directly below the chatu
+line, and, if the line has a `:width` (as inserted by
+`chatu-excalidraw-new`), (re)inserts a
+`#+CAPTION:`/`#+ATTR_ORG:`/`#+ATTR_LATEX:`/`#+ATTR_HTML:` block below
+that, ahead of the image link, e.g.:
 
 ```org
+#+chatu: :excalidraw "chatu_20260701_022806" :width 400
+#+RESULTS:
 #+CAPTION:
 #+ATTR_ORG: :width 400
 #+ATTR_LATEX: :width 0.5\linewidth :float nil
 #+ATTR_HTML: :width 400 :class zoomImage :border 1
-[[file:./draws/arch.svg]]
+[[file:./draws/chatu_20260701_022806.svg]]
 ```
 
 Re-run `C-c C-c` any time after editing the diagram; it fully
-regenerates everything it owns (the `#+results:` placeholder, any
-previous `#+ATTR_*` block, and the image link) rather than appending,
-so repeated renders don't accumulate stale content.
+regenerates everything below `#+RESULTS:` (any previous `#+ATTR_*`
+block and the image link) rather than appending, so repeated renders
+don't accumulate stale content. `#+RESULTS:` itself is left alone once
+present.
 
 Note: the export runs asynchronously, and the image link is inserted
 immediately regardless of whether it succeeds — if the rendered image
