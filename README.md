@@ -16,7 +16,10 @@ so you pick the diagram type from a list instead of typing it.
 
 - [chatu](https://github.com/kimim/chatu)
 - [`excalidraw_export`](https://www.npmjs.com/package/excalidraw_export)
-  (npm) — used by `chatu-add` to render `.excalidraw` files to SVG.
+  (npm) — used by `chatu-add` to render `.excalidraw` files to SVG. If
+  it fails with `ERR_DLOPEN_FAILED` / a `NODE_MODULE_VERSION`
+  mismatch, see [Node/canvas version issues](#nodecanvas-version-issues)
+  below.
 - A way to edit `.excalidraw` files, used by `chatu-open`:
   - macOS: an app registered as the default handler for `.excalidraw`
     files (see [macOS setup](#macos-setup-round-trip-saving) below for
@@ -55,6 +58,7 @@ Or manually, if the file is on your `load-path`:
 | `chatu-excalidraw-executable-func` | `chatu-excalidraw--find-executable` | Function used to locate a browser executable on non-macOS systems. |
 | `chatu-excalidraw-new-type-options` | `("drawio" "plantuml" "excalidraw")` | Candidates offered by `chatu-excalidraw-new`'s type prompt. |
 | `chatu-excalidraw-new-default-type` | `"drawio"` | Type preselected in that prompt. |
+| `chatu-excalidraw-export-bin-dir` | `nil` | Directory prepended to `PATH` when running `excalidraw_export`. Set this if you had to install `excalidraw_export` under a specific Node version — see [Node/canvas version issues](#nodecanvas-version-issues). |
 
 Example — pointing at a self-hosted Excalidraw server:
 
@@ -132,6 +136,46 @@ Once this is set up, `chatu-excalidraw-open` opens the local file
 directly, the installed app gets a real file handle, and Cmd-S in the
 editor writes straight back to that same path —
 `chatu-excalidraw-server-url` is not consulted on macOS at all.
+
+## Node/canvas version issues
+
+`excalidraw_export` depends on the native `canvas` npm module, which
+ships prebuilt binaries pinned to specific Node ABI versions. If your
+system Node is newer than what `canvas` has a prebuilt binary for,
+`chatu-add` silently fails (it runs the export asynchronously and
+inserts the image link regardless of success — check for a missing
+output file if the rendered image looks broken) with something like:
+
+```
+Error: The module '.../canvas/build/Release/canvas.node'
+was compiled against a different Node.js version using
+NODE_MODULE_VERSION 131. This version of Node.js requires
+NODE_MODULE_VERSION 147.
+```
+
+`npm rebuild canvas` does **not** fix this if your Node is new enough
+that `canvas`'s C++ source itself has stopped compiling against the
+current V8 headers (e.g. `no member named 'GetIsolate' in
+'v8::Context'`) — that means the installed `canvas` major version
+doesn't support your Node at all, prebuilt or from source.
+
+The fix is to install `excalidraw_export` under an older Node version
+via [nvm](https://github.com/nvm-sh/nvm), and point
+`chatu-excalidraw-export-bin-dir` at it:
+
+```bash
+nvm install 22
+nvm exec 22 npm install -g excalidraw_export
+```
+
+```elisp
+(setq chatu-excalidraw-export-bin-dir "~/.nvm/versions/node/v22.23.1/bin")
+```
+
+`excalidraw_export`'s shebang is `#!/usr/bin/env node`, so prepending
+that directory to `PATH` for the export command (which is what this
+variable does) makes it resolve to the matching Node instead of
+whatever else is first on your regular `PATH`.
 
 ## License
 

@@ -79,6 +79,23 @@ save changes straight back to that file). See `chatu-excalidraw-open'."
   :group 'chatu-excalidraw
   :type 'string)
 
+(defcustom chatu-excalidraw-export-bin-dir nil
+  "Directory prepended to PATH when running `excalidraw_export'.
+
+`excalidraw_export' depends on the native \"canvas\" npm module, whose
+prebuilt binaries lag behind the newest Node.js releases; on a system
+Node too new for the installed \"canvas\" version, it fails with an
+ERR_DLOPEN_FAILED / NODE_MODULE_VERSION mismatch. If that happens,
+install `excalidraw_export' under an older Node via nvm (e.g. `nvm
+exec 22 npm install -g excalidraw_export'), then point this at that
+Node's bin directory, e.g. \"~/.nvm/versions/node/v22.23.1/bin\" — its
+shebang (`#!/usr/bin/env node') will then resolve to that Node
+instead of whatever is first on your regular PATH. Leave nil to use
+`excalidraw_export' as found on PATH unmodified."
+  :group 'chatu-excalidraw
+  :type '(choice (const :tag "Use PATH as-is" nil)
+                 (directory :tag "Node bin directory")))
+
 (defun chatu-excalidraw--find-executable ()
   "Find the browser executable on PATH, with macOS compatibility.
 For macOS, tries to use the \"open\" command for handling URLs."
@@ -109,9 +126,15 @@ KEYWORD-PLIST contains parameters from the chatu line."
                           "echo 'File already in place'"
                           (format "mv %s %s"
                                   (shell-quote-argument generated-svg)
-                                  (shell-quote-argument output-path)))))
-    (format "mkdir -p %s && excalidraw_export %s && %s"
+                                  (shell-quote-argument output-path))))
+         (path-prefix (if chatu-excalidraw-export-bin-dir
+                          (format "PATH=%s:$PATH "
+                                  (shell-quote-argument
+                                   (expand-file-name chatu-excalidraw-export-bin-dir)))
+                        "")))
+    (format "mkdir -p %s && %sexcalidraw_export %s && %s"
             (shell-quote-argument output-dir)
+            path-prefix
             (shell-quote-argument input-path)
             move-command)))
 
