@@ -159,12 +159,43 @@ For macOS, tries to use the \"open\" command for handling URLs."
       (wrong-type-argument
        (message "Cannot find a suitable browser on the PATH."))))))
 
+(defun chatu-excalidraw--ensure-baseline (input-path)
+  "Add the legacy \"baseline\" field to text elements in INPUT-PATH.
+Current Excalidraw (and AI-generated files) use the newer schema where
+\"baseline\" was replaced by \"lineHeight\", but the renderer bundled
+in `excalidraw_export' still computes text y-positions from
+\"baseline\" — without it every line lands at y=\"NaN\", stacking all
+lines of a label on top of each other in the exported SVG."
+  (when (file-exists-p input-path)
+    (let* ((json (with-temp-buffer
+                   (insert-file-contents input-path)
+                   (json-parse-buffer)))
+           (elements (gethash "elements" json))
+           (modified nil))
+      (when elements
+        (seq-doseq (elem elements)
+          (when (and (equal (gethash "type" elem) "text")
+                     (not (gethash "baseline" elem)))
+            ;; ponytail: 0.36*fontSize descent approximation, matches
+            ;; the baseline values old Excalidraw wrote closely enough
+            ;; for hand-drawn style; refine per-font if it drifts.
+            (puthash "baseline"
+                     (round (- (gethash "height" elem)
+                               (* 0.36 (gethash "fontSize" elem))))
+                     elem)
+            (setq modified t)))
+        (when modified
+          (let ((coding-system-for-write 'utf-8))
+            (with-temp-file input-path
+              (insert (json-serialize json)))))))))
+
 (defun chatu-excalidraw-script (keyword-plist)
   "Get conversion script.
 KEYWORD-PLIST contains parameters from the chatu line."
   (let* ((input-path
           (chatu-common-with-extension
            (plist-get keyword-plist :input-path) "excalidraw"))
+         (_ (chatu-excalidraw--ensure-baseline input-path))
          (output-path (plist-get keyword-plist :output-path))
          (output-dir (file-name-directory output-path))
          ;; excalidraw_export names the generated SVG after the source file
@@ -198,6 +229,19 @@ KEYWORD-PLIST contains parameters from the chatu line."
             move-command
             font-command)))
 
+(defcustom chatu-excalidraw-claude-program "claude"
+  "Claude Code executable used by `chatu-excalidraw-open' for AI generation."
+  :group 'chatu-excalidraw
+  :type 'string)
+
+(defcustom chatu-excalidraw-claude-args '("--permission-mode" "acceptEdits")
+  "Extra arguments passed to `chatu-excalidraw-claude-program'.
+The default allows Claude Code to write the generated .excalidraw
+file without an interactive permission prompt, which would otherwise
+hang the headless process."
+  :group 'chatu-excalidraw
+  :type '(repeat string))
+
 (defconst chatu-excalidraw-empty
   "{\"type\":\"excalidraw\",\"version\":2,\"source\":\"https://excalidraw.com\",\"elements\":[],\"appState\":{\"gridSize\":null,\"viewBackgroundColor\":\"#ffffff\"}}"
   "Content of empty Excalidraw file.")
@@ -214,23 +258,66 @@ save changes straight back to this same path.
 
 On other systems, no such file-handler mechanism exists, so the
 diagram content is instead passed to `chatu-excalidraw-server-url' via
-a URL, and edits must be exported/saved back manually."
+a URL, and edits must be exported/saved back manually.
+
+When the .excalidraw file does not exist yet, prompt for an optional
+AI description; if non-empty, generate the diagram asynchronously via
+`chatu-excalidraw-claude-program' (using the excalidraw-diagram-generator
+skill) before opening it. An empty description creates an empty
+diagram, as before."
   (interactive)
   (let* ((input-path (plist-get keyword-plist :input-path))
-         (input-path (file-truename (chatu-common-with-extension input-path "excalidraw")))
-         (file-exists (file-exists-p input-path)))
-    (unless file-exists
-      (with-temp-file input-path
-        (insert chatu-excalidraw-empty)))
-    (if (eq system-type 'darwin)
-        (start-process "excalidraw" nil "open" input-path)
-      (let* ((browser-path (funcall chatu-excalidraw-executable-func))
-             (url (concat chatu-excalidraw-server-url "?#json="
-                         (url-hexify-string
-                          (with-temp-buffer
-                            (insert-file-contents input-path)
-                            (buffer-string))))))
-        (start-process "excalidraw" nil browser-path url)))))
+         (input-path (file-truename (chatu-common-with-extension input-path "excalidraw"))))
+    (if (file-exists-p input-path)
+        (chatu-excalidraw--open-file input-path)
+      (let ((prompt (string-trim
+                     (read-string "AI diagram description (empty to draw yourself): "))))
+        (if (string-empty-p prompt)
+            (progn
+              (with-temp-file input-path
+                (insert chatu-excalidraw-empty))
+              (chatu-excalidraw--open-file input-path))
+          (chatu-excalidraw--generate input-path prompt))))))
+
+(defun chatu-excalidraw--open-file (input-path)
+  "Open existing INPUT-PATH in the Excalidraw PWA or browser."
+  (if (eq system-type 'darwin)
+      (start-process "excalidraw" nil "open" input-path)
+    (let* ((browser-path (funcall chatu-excalidraw-executable-func))
+           (url (concat chatu-excalidraw-server-url "?#json="
+                        (url-hexify-string
+                         (with-temp-buffer
+                           (insert-file-contents input-path)
+                           (buffer-string))))))
+      (start-process "excalidraw" nil browser-path url))))
+
+(defun chatu-excalidraw--generate (input-path prompt)
+  "Generate INPUT-PATH from PROMPT via Claude Code, then open it.
+Runs asynchronously; falls back to an empty diagram if generation
+fails or produces something that is not an Excalidraw JSON file."
+  (message "chatu-excalidraw: generating diagram with AI, will open when ready...")
+  (let ((process
+         (apply #'start-process "chatu-excalidraw-ai" nil
+                chatu-excalidraw-claude-program
+                "-p"
+                (format (concat "使用 excalidraw-diagram-generator 技能，"
+                                "根据以下描述生成 Excalidraw 图表，"
+                                "并将结果保存到文件 %s ：%s")
+                        input-path prompt)
+                chatu-excalidraw-claude-args)))
+    (set-process-sentinel
+     process
+     (lambda (_process event)
+       (unless (and (string-match-p "finished" event)
+                    (file-exists-p input-path)
+                    (with-temp-buffer
+                      (insert-file-contents input-path)
+                      (string-prefix-p "{" (string-trim (buffer-string)))))
+         (message "chatu-excalidraw: AI generation failed (%s), opening empty diagram"
+                  (string-trim event))
+         (with-temp-file input-path
+           (insert chatu-excalidraw-empty)))
+       (chatu-excalidraw--open-file input-path)))))
 
 (defun chatu-excalidraw-save-from-url (url output-path)
   "Save Excalidraw content from URL to OUTPUT-PATH."
