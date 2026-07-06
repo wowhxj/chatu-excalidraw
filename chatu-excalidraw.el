@@ -47,6 +47,7 @@
 (require 'chatu)
 (require 'chatu-common)
 (require 'chatu-drawio)
+(require 'chatu-plantuml)
 
 (defgroup chatu-excalidraw nil
   "Chatu backend for Excalidraw."
@@ -417,6 +418,27 @@ KEYWORD-PLIST contains parameters from the chatu line."
 
 ;;;###autoload
 (advice-add 'chatu-drawio-open :override #'chatu-excalidraw-drawio-open)
+
+(defconst chatu-excalidraw-plantuml-empty "@startuml\n@enduml\n"
+  "Content of an empty PlantUML file.")
+
+(defun chatu-excalidraw--plantuml-open-file (input-path)
+  "Open INPUT-PATH (PlantUML source) in another Emacs window."
+  (chatu-common-open-other-window input-path ""))
+
+(defun chatu-excalidraw-plantuml-open (keyword-plist)
+  "Like `chatu-plantuml-open', with optional AI generation/modification.
+KEYWORD-PLIST contains parameters from the chatu line."
+  (interactive)
+  (let* ((input-path (plist-get keyword-plist :input-path))
+         (input-path (chatu-common-with-extension input-path "puml")))
+    (chatu-excalidraw--maybe-generate
+     input-path chatu-excalidraw-plantuml-empty "@"
+     "根据以下描述生成 PlantUML 图表源码（.puml 文件，以 @startuml 等指令开头），"
+     #'chatu-excalidraw--plantuml-open-file)))
+
+;;;###autoload
+(advice-add 'chatu-plantuml-open :override #'chatu-excalidraw-plantuml-open)
 
 (defun chatu-excalidraw-save-from-url (url output-path)
   "Save Excalidraw content from URL to OUTPUT-PATH."
