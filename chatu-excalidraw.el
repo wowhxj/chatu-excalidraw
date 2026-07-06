@@ -46,6 +46,7 @@
 
 (require 'chatu)
 (require 'chatu-common)
+(require 'chatu-drawio)
 
 (defgroup chatu-excalidraw nil
   "Chatu backend for Excalidraw."
@@ -268,17 +269,39 @@ diagram, as before."
   (interactive)
   (let* ((input-path (plist-get keyword-plist :input-path))
          (input-path (file-truename (chatu-common-with-extension input-path "excalidraw"))))
-    (if (file-exists-p input-path)
-        (chatu-excalidraw--open-file input-path)
-      (make-directory (file-name-directory input-path) t)
-      (let ((prompt (string-trim
-                     (read-string "AI diagram description (empty to draw yourself): "))))
-        (if (string-empty-p prompt)
-            (progn
-              (with-temp-file input-path
-                (insert chatu-excalidraw-empty))
-              (chatu-excalidraw--open-file input-path))
-          (chatu-excalidraw--generate input-path prompt))))))
+    (chatu-excalidraw--maybe-generate
+     input-path chatu-excalidraw-empty "{"
+     (concat "使用 excalidraw-diagram-generator 技能，"
+             "根据以下描述生成 Excalidraw 图表，")
+     #'chatu-excalidraw--open-file)))
+
+(defun chatu-excalidraw--maybe-generate
+    (input-path empty-content valid-prefix prompt-preamble open-fn)
+  "Open INPUT-PATH via OPEN-FN, offering AI generation if it is missing.
+When the file does not exist, prompt for an optional description; if
+non-empty, generate the file with Claude Code (instructed by
+PROMPT-PREAMBLE) and validate the result starts with VALID-PREFIX,
+falling back to EMPTY-CONTENT on failure. An empty description writes
+EMPTY-CONTENT directly.
+
+When the file already exists and the command was invoked with a
+prefix argument (\\[universal-argument]), prompt for a modification
+instruction and let Claude Code edit the existing file, restoring the
+original on failure."
+  (if (file-exists-p input-path)
+      (if current-prefix-arg
+          (chatu-excalidraw--modify input-path valid-prefix open-fn)
+        (funcall open-fn input-path))
+    (make-directory (file-name-directory input-path) t)
+    (let ((prompt (string-trim
+                   (read-string "AI diagram description (empty to draw yourself): "))))
+      (if (string-empty-p prompt)
+          (progn
+            (with-temp-file input-path
+              (insert empty-content))
+            (funcall open-fn input-path))
+        (chatu-excalidraw--generate input-path prompt empty-content
+                                    valid-prefix prompt-preamble open-fn)))))
 
 (defun chatu-excalidraw--open-file (input-path)
   "Open existing INPUT-PATH in the Excalidraw PWA or browser."
@@ -292,18 +315,50 @@ diagram, as before."
                            (buffer-string))))))
       (start-process "excalidraw" nil browser-path url))))
 
-(defun chatu-excalidraw--generate (input-path prompt)
-  "Generate INPUT-PATH from PROMPT via Claude Code, then open it.
-Runs asynchronously; falls back to an empty diagram if generation
-fails or produces something that is not an Excalidraw JSON file."
+(defun chatu-excalidraw--modify (input-path valid-prefix open-fn)
+  "Let Claude Code modify existing INPUT-PATH, then open it via OPEN-FN.
+Runs asynchronously; the result must still start with VALID-PREFIX,
+otherwise the original content is restored. An empty instruction just
+opens the file."
+  (let ((instruction (string-trim
+                      (read-string "AI modification instruction (empty to just open): "))))
+    (if (string-empty-p instruction)
+        (funcall open-fn input-path)
+      (let ((original (with-temp-buffer
+                        (insert-file-contents input-path)
+                        (buffer-string))))
+        (message "chatu-excalidraw: modifying diagram with AI, will open when ready...")
+        (set-process-sentinel
+         (apply #'start-process "chatu-excalidraw-ai" nil
+                chatu-excalidraw-claude-program
+                "-p"
+                (format "读取图表文件 %s ，按照以下要求修改它并保存回原文件：%s"
+                        input-path instruction)
+                chatu-excalidraw-claude-args)
+         (lambda (_process event)
+           (unless (and (string-match-p "finished" event)
+                        (file-exists-p input-path)
+                        (with-temp-buffer
+                          (insert-file-contents input-path)
+                          (string-prefix-p valid-prefix (string-trim (buffer-string)))))
+             (message "chatu-excalidraw: AI modification failed (%s), restoring original"
+                      (string-trim event))
+             (let ((coding-system-for-write 'utf-8))
+               (with-temp-file input-path
+                 (insert original))))
+           (funcall open-fn input-path)))))))
+
+(defun chatu-excalidraw--generate
+    (input-path prompt empty-content valid-prefix prompt-preamble open-fn)
+  "Generate INPUT-PATH from PROMPT via Claude Code, then open it via OPEN-FN.
+PROMPT-PREAMBLE, VALID-PREFIX and EMPTY-CONTENT are as described in
+`chatu-excalidraw--maybe-generate'. Runs asynchronously."
   (message "chatu-excalidraw: generating diagram with AI, will open when ready...")
   (let ((process
          (apply #'start-process "chatu-excalidraw-ai" nil
                 chatu-excalidraw-claude-program
                 "-p"
-                (format (concat "使用 excalidraw-diagram-generator 技能，"
-                                "根据以下描述生成 Excalidraw 图表，"
-                                "并将结果保存到文件 %s ：%s")
+                (format (concat prompt-preamble "并将结果保存到文件 %s ：%s")
                         input-path prompt)
                 chatu-excalidraw-claude-args)))
     (set-process-sentinel
@@ -313,12 +368,55 @@ fails or produces something that is not an Excalidraw JSON file."
                     (file-exists-p input-path)
                     (with-temp-buffer
                       (insert-file-contents input-path)
-                      (string-prefix-p "{" (string-trim (buffer-string)))))
+                      (string-prefix-p valid-prefix (string-trim (buffer-string)))))
          (message "chatu-excalidraw: AI generation failed (%s), opening empty diagram"
                   (string-trim event))
          (with-temp-file input-path
-           (insert chatu-excalidraw-empty)))
-       (chatu-excalidraw--open-file input-path)))))
+           (insert empty-content)))
+       (funcall open-fn input-path)))))
+
+(defun chatu-excalidraw--drawio-script-strip-fallback (orig keyword-plist)
+  "Append removal of draw.io's SVG fallback notice to ORIG's script.
+draw.io appends a `<switch>' fallback reading \"Text is not SVG -
+cannot display\" to exported SVGs; foreignObject-capable renderers
+ignore it, but librsvg (used by Emacs for inline images) displays it.
+KEYWORD-PLIST contains parameters from the chatu line."
+  (let ((script (funcall orig keyword-plist))
+        (output-path (plist-get keyword-plist :output-path)))
+    (format "%s && sed -i.bak 's|Text is not SVG - cannot display||' %s && rm -f %s.bak"
+            script
+            (shell-quote-argument output-path)
+            (shell-quote-argument output-path))))
+
+(advice-add 'chatu-drawio-script :around
+            #'chatu-excalidraw--drawio-script-strip-fallback)
+
+(defun chatu-excalidraw--drawio-open-file (input-path)
+  "Open existing INPUT-PATH in the draw.io desktop app or via chatu."
+  (if (eq system-type 'darwin)
+      ;; `chatu-common-open-external' does `open -a <executable>' here,
+      ;; but the executable found on PATH is homebrew's shell-script
+      ;; launcher, which LaunchServices rejects (error -10811); open by
+      ;; application name instead.
+      (start-process "drawio" nil "open" "-a" "draw.io" input-path)
+    (chatu-common-open-external
+     (funcall chatu-drawio-executable-func) input-path chatu-drawio-empty)))
+
+(defun chatu-excalidraw-drawio-open (keyword-plist)
+  "Like `chatu-drawio-open', with AI generation and working macOS open.
+KEYWORD-PLIST contains parameters from the chatu line."
+  (interactive)
+  (let* ((input-path (plist-get keyword-plist :input-path))
+         (input-path (file-truename (chatu-common-with-extension input-path "drawio"))))
+    (chatu-excalidraw--maybe-generate
+     input-path chatu-drawio-empty "<"
+     (concat "根据以下描述生成 draw.io 图表"
+             "（未压缩的 mxfile XML 格式，.drawio 文件；"
+             "如有 drawio-generator 技能可协助生成），")
+     #'chatu-excalidraw--drawio-open-file)))
+
+;;;###autoload
+(advice-add 'chatu-drawio-open :override #'chatu-excalidraw-drawio-open)
 
 (defun chatu-excalidraw-save-from-url (url output-path)
   "Save Excalidraw content from URL to OUTPUT-PATH."
