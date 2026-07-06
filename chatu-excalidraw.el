@@ -270,6 +270,7 @@ diagram, as before."
          (input-path (file-truename (chatu-common-with-extension input-path "excalidraw"))))
     (if (file-exists-p input-path)
         (chatu-excalidraw--open-file input-path)
+      (make-directory (file-name-directory input-path) t)
       (let ((prompt (string-trim
                      (read-string "AI diagram description (empty to draw yourself): "))))
         (if (string-empty-p prompt)
@@ -333,9 +334,16 @@ fails or produces something that is not an Excalidraw JSON file."
 ;;;###autoload
 (add-to-list 'chatu-keyword-value-functions #'chatu-excalidraw-get-width t)
 
-(defun chatu-excalidraw--new-input-name ()
-  "Generate an input file base name: \"chatu_<timestamp>\"."
-  (format-time-string "chatu_%Y%m%d_%H%M%S"))
+(defun chatu-excalidraw--new-input-name (type)
+  "Generate an input file name: \"chatu_<timestamp>\" with TYPE's extension.
+When `chatu-input-dir' is set (possibly buffer-locally), prepend it,
+so the chatu line spells out the full relative path instead of
+relying on the implicit directory; chatu ignores `chatu-input-dir'
+for input names that already contain a directory, so both forms
+resolve identically."
+  (concat (when chatu-input-dir (file-name-as-directory chatu-input-dir))
+          (format-time-string "chatu_%Y%m%d_%H%M%S")
+          "." (if (string= type "plantuml") "puml" type)))
 
 ;;;###autoload
 (defun chatu-excalidraw-new ()
@@ -356,7 +364,7 @@ than prompted for."
          (suffix (if (derived-mode-p 'markdown-mode)
                      " -->"
                    "\n#+RESULTS:"))
-         (input-name (chatu-excalidraw--new-input-name))
+         (input-name (chatu-excalidraw--new-input-name selected-type))
          (width (read-number "Image width: " chatu-excalidraw-new-default-width)))
     (insert prefix selected-type " \"" input-name "\" :width "
             (number-to-string width) suffix)
