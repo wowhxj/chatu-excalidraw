@@ -70,6 +70,21 @@ Or manually, if the file is on your `load-path`:
 (require 'chatu-excalidraw)
 ```
 
+## AI generation (optional)
+
+This package is standalone: `C-c C-o` on a `#+chatu:` line whose
+`.excalidraw` file does not exist yet just creates an empty diagram
+and opens it.
+
+If you also install the separate
+[chatu-ai](https://github.com/wowhxj/chatu-ai) package, that same
+`C-c C-o` first prompts for an optional natural-language description
+and can have a headless coding agent (Claude Code, etc.) generate the
+diagram before opening it — and `C-u C-c C-o` on an existing diagram
+lets the agent modify it. chatu-ai adds the same flow to the `drawio`
+and `plantuml` backends too. There is no dependency in either
+direction; install either, both, or neither.
+
 ## Customization
 
 | Variable | Default | Purpose |
